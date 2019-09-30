@@ -215,7 +215,7 @@ function task_9()
 	sigma = 0.5
 end
 
-function task_9_runner(x, y, v_x, v_y)
+function task_9_runner(x, y, v_data, v_y)
 	lambda = 0.001
 	sigma = 0.5
 	x,y = svm_train()
@@ -248,7 +248,14 @@ function k_fold()
 	for i=1:k
 		folds[i] = indices[1+50(i-1):50*i]
 	end
-
+	# folds: 10 x 50.
+	for i=1: length(folds)
+		x_data = x[collect(Iterators.flatten(folds[1:end .!= i]))]
+		y_data = y[collect(Iterators.flatten(folds[1:end .!= i]))]
+		x_val = x[folds[i]]
+		y_val = y[folds[i]]
+		task_9_runner(x_data, y_data, x_val, y_val)
+	end
 	#holdout cross validation
 	#x_val = x[indices[1:100]]
 	#y_val = y[indices[1:100]]
