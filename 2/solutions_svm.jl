@@ -57,16 +57,6 @@ function kernel(x, sigma)
 	return K
 end
 
-function test()
-	lambda = 0.1
-	sigma = 0.5
-	x_hat = [0.7478959140249275, 0.8622726723467289, -0.3373347598106853, -0.398693397128973]
-	x,y = svm_train()
-	v = svm(x, y, lambda, sigma)
-	v = v[:, end]
-	m = pred_model(x_hat, x, y, v, lambda, sigma)
-end
-
 function task_7(v_data,v_y)
 	lambda = [0.1, 0.01, 0.001, 0.0001]
 	sigma = [1, 0.5, 0.25]
@@ -75,7 +65,7 @@ function task_7(v_data,v_y)
 	train_errors = zeros(length(lambda),length(sigma))
 	for l=1:length(lambda)
 		for s=1:length(sigma)
-			println("lambda=$l \n sigma=$s")
+			println("lambda=$(lambda[l]) \n sigma=$(sigma[s])")
 			v = svm(x, y, lambda[l], sigma[s])
 			v = v[:,end]
 			#print(sqrt.(sum(abs2, v, dims=1)))
@@ -210,15 +200,7 @@ function task_8b_constants()
 	println(mean(v_y.==1))
 end
 
-function task_9()
-	lambda = 0.001
-	sigma = 0.5
-end
-
-function task_9_runner(x, y, v_data, v_y)
-	lambda = 0.001
-	sigma = 0.5
-	x,y = svm_train()
+function task_9_runner(x, y, v_data, v_y, lambda, sigma)
 	v = svm(x, y, lambda, sigma)
 	v = v[:,end]
 	#print(sqrt.(sum(abs2, v, dims=1)))
@@ -236,10 +218,11 @@ function task_9_runner(x, y, v_data, v_y)
 	train_error = mean(x_train_labels .!= y)
 	println("test_error: $test_error")
 	println("train_error: $train_error")
-	println("\n")
+	return test_error, train_error
 end
 
-function k_fold()
+function k_fold(lambda, sigma)
+	mt = MersenneTwister(0xAC) # seed if we want to rexamine the same randperm.
 	k = 10
 	x,y = svm_train()
 	N = length(x)
@@ -249,16 +232,74 @@ function k_fold()
 		folds[i] = indices[1+50(i-1):50*i]
 	end
 	# folds: 10 x 50.
+	aggr_test_error = Float64[]
+	aggr_train_error = Float64[]
 	for i=1: length(folds)
 		x_data = x[collect(Iterators.flatten(folds[1:end .!= i]))]
 		y_data = y[collect(Iterators.flatten(folds[1:end .!= i]))]
 		x_val = x[folds[i]]
 		y_val = y[folds[i]]
-		task_9_runner(x_data, y_data, x_val, y_val)
+		test_error, train_error = task_9_runner(x_data, y_data, x_val, y_val, lambda,sigma)
+		push!(aggr_test_error, test_error)
+		push!(aggr_train_error, train_error)
 	end
+	println("Average, 10 folds. Test error: ",mean(aggr_test_error))
+	println("Average, 10 folds. Train error: ",mean(aggr_train_error))
+	return mean(aggr_test_error), mean(aggr_train_error)
+end
+
+function hold_out()
+	mt = MersenneTwister(0xAC) # seed if we want to rexamine the same randperm.
+	x,y = svm_train()
+	N = length(x)
+	indices = randperm(500)
 	#holdout cross validation
-	#x_val = x[indices[1:100]]
-	#y_val = y[indices[1:100]]
-	#x_train = x[indices[101:end]]
-	#y_train = y[indices[101:end]]
+	x_train = x[indices[101:end]]
+	y_train = y[indices[101:end]]
+	x_val = x[indices[1:100]]
+	y_val = y[indices[1:100]]
+	test_error, train_error = task_9_runner(x_train, y_train, x_val, y_val)
+end
+
+function variance_fold(lambda, sigma)
+	test_means = Float64[]
+	train_means = Float64[]
+	for i=1: 40
+		test_error_mean, train_error_mean = k_fold(lambda,sigma)
+		push!(test_means, test_error_mean)
+		push!(train_means, train_error_mean)
+	end
+	var_test = var(test_means)
+	var_train = var(train_means)
+	println("Variance test error, k-fold (k=10)",var(test_means))
+	println("Variance train error, k-fold (k=10)",var(train_means))
+	fig2 = histogram(test_means, bins=25, title="Histogram, Hold-out. Mean=$(mean(test_means)) Variance: = $(round(var_test,digits=6))",legend=false, ylabel="Frequency", xlabel="Test error")
+	savefig("histogram_k_fold_$(lambda)_$(sigma)")
+	return test_means, train_means, var_test, var_train
+end
+
+function tuning()
+	lambda = [0.1, 0.01, 0.001, 0.00001]
+	sigma = [1, 0.75, 0.5, 0.25]
+	for l=1:length(lambda)
+		for s=1:length(sigma)
+			println("lambda=$(lambda[l]), s=$(sigma[s])")
+			variance_fold(lambda[l], sigma[s])
+		end
+	end
+end
+
+function variance_hold_out()
+	test_means = Float64[]
+	train_means = Float64[]
+	for i=1: 100
+		test_error_mean, train_error_mean = hold_out()
+		push!(test_means, test_error_mean)
+		push!(train_means, train_error_mean)
+	end
+	var_test = var(test_means)
+	var_train = var(train_means)
+	println("Variance test error, k-fold (k=10)",var(test_means))
+	println("Variance train error, k-fold (k=10)",var(train_means))
+	return test_means, train_means, var_test, var_train
 end
