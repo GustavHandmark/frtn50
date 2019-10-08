@@ -2,14 +2,14 @@ using LinearAlgebra, Statistics, Random
 
 # We define some useful activation functions
 sigmoid(x) = exp(x)/(1 + exp(x))
-#+++ relu
-#+++ leakyrelu
+relu(x) = (x >=0) ? x : 0
+leakyrelu(x) = (x >= 0) ? x : 0.2*x
 
 # And methods to calculate their derivatives
 derivative(f::typeof(sigmoid), x::Float64) = sigmoid(x)*(1-sigmoid(x))
 derivative(f::typeof(identity), x::Float64) = one(x)
-#+++ derivative of relu
-#+++ derivative of leakyrelu
+derivative(f::typeof(relu), x::Float64) = (relu(x) > 0) ? 1 : 0
+derivative(f::typeof(leakyrelu), x::Float64) = (leakyrelu(x) > 0) ? 1 : 0.2
 
 # Astract type, all layers will be a subtype of `Layer`
 abstract type Layer{T} end
@@ -20,7 +20,7 @@ struct Dense{T, F<:Function} <: Layer{T}
     W::Matrix{T}
     b::Vector{T}
     σ::F
-    x::Vector{T}    # W*z+b
+    x::Vector{T}    # W*z+b*
     out::Vector{T}  # σ(W*z+b)
     ∂W::Matrix{T}   # ∂J/dW
     ∇b::Vector{T}   # (∂J/db)ᵀ
@@ -46,9 +46,8 @@ end
     Store the input to the activation function in l.x and the output in l.out. """
 function (l::Dense)(z)
     #+++ Implement the definition of a Dense layer here
-    #+++
-    #+++
-    #+++
+    l.x[:,:] = l.W*z + l.b
+    l.out[:,:] = l.σ.(l.x)
 end
 
 # A network is just a sequence of layers
@@ -60,10 +59,15 @@ end
     Comute the result of applying each layer in a network to the previous output. """
 function (n::Network)(z)
     #+++ Implement evaluation of a network here
-    #+++
-    #+++
-    #+++
-    #+++
+    out = Any[]
+    for k=1:length(n.layers)
+        if k == 1
+            push!(out, n.layers[k](z))
+        else
+            push!(out, n.layers[k](out[k-1]))
+        end
+    end
+    return out[end]
 end
 
 """ δ = backprop!(l::Dense, δnext, zin)
@@ -72,11 +76,11 @@ end
     and save l.∂W = ∂L/∂Wᵢ and l.∇b = (∂L/∂bᵢ)ᵀ """
 function backprop!(l::Dense, δnext, zin)
     #+++ Implement back-propagation of a dense layer here
-    #+++
-    #+++
+    l.∇b[:, :] =  δnext.*derivative.(l.σ, l.x)
+    l.∂W[:, :] = l.∇b*zin'
+    l.δ[:, :] = l.W'*l.∇b
     return l.δ
 end
-
 
 """ backprop!(n::Network, input, ∂J∂y)
     Assuming that network `n` has been called with `input`, i.e `y=n(input)`
@@ -89,7 +93,7 @@ function backprop!(n::Network, input, ∂J∂y)
     # Iterate through layers, starting at the end
     for i in length(layers):-1:2
         #+++ Fill in the missing code here
-        #+++
+        δ = backprop!(layers[i], δ, layers[i-1].out)
     end
     # To first layer, the input was `input`
     zin = input
@@ -117,6 +121,23 @@ end
 sumsquares(yhat,y) =  norm(yhat-y)^2
 # And its gradient with respect to yhat: L_{yhat}(yhat,y)
 derivative(::typeof(sumsquares), yhat, y) =  yhat - y
+
+function gradientstep!(n, lossfunc, x, y)
+ out = n(x)
+ # Calculate (∂L/∂out)ᵀ
+ ∇L = derivative(lossfunc, out, y)
+ # Backward pass over network
+ backprop!(n, x, ∇L)
+ # Get list of all parameters and gradients
+ parameters, gradients = getparams(n)
+ # For each parameter, take gradient step
+ for i = 1:length(parameters)
+ p = parameters[i]
+ g = gradients[i]
+ p .= p .- 0.001.*g
+ end
+end
+
 
 """ Structure for saving all the parameters and states needed for ADAM,
     as well as references to the parameters and gradients """
@@ -158,15 +179,14 @@ function update!(At::ADAMTrainer)
         ∇p = At.gradients[i]    # This will reference either a ∂W or ∇b
         # Get each of the stored values m, mhat, v, vhat for this parameter
         m, mh, v, vh = At.ms[i], At.mhs[i], At.vs[i], At.vhs[i]
-
         # Update ADAM parameters
-        #+++
-        #+++
-        #+++
-        #+++
+        m .= β1*m .+ (1 - β1)*∇p
+        mh .= m./(1 - (β1)^t)
+        v .= β2*v .+ (1 - β2).*(∇p.^2)
+        vh .= v./(1 - (β2)^t)
 
         # Take the ADAM step
-        #+++
+        p .= p .- γ.*mh./sqrt.(vh.+ϵ)
     end
     At.t[] = t+1     # At.t is a reference, we update the value t like this
     return
@@ -189,9 +209,10 @@ function train!(n, alg, xs, ys, lossfunc)
         #+++ Do a forward and backwards pass
         #+++ with `xi`, `yi, and
         #+++ update parameters using `alg`
-        #+++
-        #+++
-        #+++
+        out = n(xi)
+        ∇L = derivative(lossfunc, out, yi)
+        backprop!(n,xi,∇L)
+        update!(alg)
 
         loss = lossfunc(out, yi)
         lossall += loss
@@ -238,7 +259,7 @@ adam = ADAMTrainer(n, 0.95, 0.999, 1e-8, 0.0001)
 using Plots
 # Train once over the data set
 @time train!(n, adam, xs, ys, sumsquares)
-scatter(xs, [copy(n(xi)) for xi in xs])
+scatter(xs, [copy(n(xi)) for xi in xs], legend=false)
 
 # Train 100 times over the data set
 for i = 1:100
