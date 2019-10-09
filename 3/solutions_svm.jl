@@ -5,7 +5,7 @@ using Statistics
 using Random
 
 function svm(x, y, lambda, sigma, beta)
-	iter = 100000
+	iter = 10000
 	println("Computing Kernel")
 	K = kernel(x, sigma)
 	Y = Diagonal(y)
@@ -18,9 +18,9 @@ function svm(x, y, lambda, sigma, beta)
 	v = zeros(length(x), iter+1)
 	println("Starting prox iterations")
 	for i=2:iter+1
-		if i==2
+		if i==2 || beta==0
 			grad = Q * v[:, i-1]
-			v[:, i], _ = prox(h_conj, (v[:, i] - step_size*grad), step_size)
+			v[:, i], _ = prox(h_conj, (v[:, i-1] - step_size*grad), step_size)
 		else
 			if beta == 1
 				beta_value = (i-2)/(i+1)
@@ -38,40 +38,35 @@ function svm(x, y, lambda, sigma, beta)
 	return v
 end
 
-function coordinate_prox()
+function coordinate_prox(x, y, step_size_uniform=false)
 	lambda = 0.001
 	sigma = 0.5
-	iter = 100000
+	iter = 500000
 	println("Computing Kernel")
 	K = kernel(x, sigma)
 	Y = Diagonal(y)
 	println("Computing Q")
 	Q = (1/lambda) * (Y * K * Y)
 	step_size = 1/opnorm(Q)
-	mu = minimum(eigvals(Q))
-	h = HingeLoss(ones(length(x)),1/length(x))
+	h = HingeLoss([1],1/length(x))
 	h_conj = Conjugate(h)
-	v = zeros(length(x), iter+1)
+	v = zeros(length(x),1)
+	v_save = zeros(length(x), convert(Int64, iter/500))
 	println("Starting prox iterations")
-	for i=2:iter+1
-		if i==2
-			grad = Q * v[:, i-1]
-			v[:, i], _ = prox(h_conj, (v[:, i] - step_size*grad), step_size)
-		else
-			if beta == 1
-				beta_value = (i-2)/(i+1)
-			elseif beta == 2
-				print("not implemented")
-				exit()
-			elseif beta == 3
-				beta_value = (1-sqrt(mu*lambda))/(1+sqrt(mu*lambda))
-			end
-			v[:, i] = v[:, i-1] + beta_value*(v[:,i-1] - v[:, i-2])
-			grad = Q * v[:, i]
-			v[:, i], _ = prox(h_conj, (v[:,i] - step_size*grad), step_size)
+	for i=1:iter
+		k = rand(1:length(x))
+		if !step_size_uniform
+			step_size = 1/Q[k,k]
+		end
+		grad = Q[k,:]' * v
+		p = v[k] - step_size*grad[1]
+		val, _ = prox(h_conj, [p], step_size)
+		v[k] = val[1]
+		if i%500 == 0
+			v_save[:, convert(Int64, i/500)] = v
 		end
 	end
-	return v
+	return v, v_save
 end
 
 function pred_model(x_hat, x, y, v, lambda, sigma)
@@ -108,22 +103,51 @@ function kernel(x, sigma)
 	return K
 end
 
-function task_1(v_data,v_y, beta)
+function task_1(beta)
 	lambda = 0.001
 	sigma = 0.5
 	x,y = svm_train()
 	println("lambda=$lambda \n sigma=$sigma")
-	v = svm(x, y, lambda, sigma, beta)
+	@time v = svm(x, y, lambda, sigma, beta)
 	v_plot = v
 	v_opt = v[:,end]
 	_, length = size(v)
 	diff = v[:,2:length] .- v_opt
 	norm_diff = sqrt.(sum(abs2, diff[:,1:end-1], dims=1))
+	_, l = size(norm_diff)
+	for i=1:l
+		if norm_diff'[i] <= 1e-15
+			println("1e-15 at iteration = ",i)
+			break
+		end
+	end
 	fig = plot(max.(1e-15,norm_diff'), legend=false,
 		xlabel = "iteration nbr",
 		title = "beta = $beta",
 		yscale=:log10)
 	savefig("svm_accelerated_beta$beta.png")
+end
+
+function task_2(step_size_uniform)
+	lambda = 0.001
+	sigma = 0.5
+	x,y = svm_train()
+	println("lambda=$lambda \n sigma=$sigma")
+	@time v, v_save = coordinate_prox(x, y, step_size_uniform)
+	diff = v_save[:,:] .- v
+	norm_diff = sqrt.(sum(abs2, diff[:,1:end-1], dims=1))
+	_, l = size(norm_diff)
+	for i=1:l
+		if norm_diff'[i] <= 1e-15
+			println("1e-15 at iteration = ",i)
+			break
+		end
+	end
+	fig = plot(max.(1e-15, norm_diff'), legend=false,
+		xlabel = "iteration nbr",
+		title = "Proximaloperator. Uniform step size = $step_size_uniform",
+		yscale=:log10)
+	savefig("svm_accelerated_uniform_$step_size_uniform.png")
 end
 
 function task_8(v_data, v_y)
